@@ -55,6 +55,10 @@ import android.graphics.Picture
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.LazyListState
 import com.example.ui.theme.MyApplicationTheme
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
@@ -159,10 +163,70 @@ class MainViewModel : ViewModel() {
     private val _examAlert = MutableStateFlow<Pair<String, Boolean>?>(null)
     val examAlert: StateFlow<Pair<String, Boolean>?> = _examAlert.asStateFlow()
 
+    private val _highlightedNotificationId = MutableStateFlow<String?>(null)
+    val highlightedNotificationId: StateFlow<String?> = _highlightedNotificationId.asStateFlow()
+
+    fun handleNotificationDeepLink(notificationId: String) {
+        _currentScreen.value = AppScreen.NOTIFICATIONS
+        _highlightedNotificationId.value = notificationId
+    }
+
+    fun clearHighlightedNotification() {
+        _highlightedNotificationId.value = null
+    }
+
+    private fun loadCachedData(context: Context) {
+        val sharedPrefs = context.getSharedPreferences("brta_prefs", Context.MODE_PRIVATE)
+        val gson = Gson()
+        
+        // 1. Load app settings
+        val cachedSettingsJson = sharedPrefs.getString("cached_app_settings", null)
+        if (cachedSettingsJson != null) {
+            try {
+                val settings = gson.fromJson(cachedSettingsJson, AppSettings::class.java)
+                _appSettings.value = settings
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        // 2. Load traffic signs
+        val cachedSignsJson = sharedPrefs.getString("cached_traffic_signs", null)
+        if (cachedSignsJson != null) {
+            try {
+                val typeToken = object : TypeToken<Map<String, List<TrafficSign>>>() {}.type
+                val signsMap: Map<String, List<TrafficSign>> = gson.fromJson(cachedSignsJson, typeToken)
+                if (signsMap.isNotEmpty()) {
+                    _trafficSigns.value = signsMap
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        // 3. Load notifications
+        val cachedNotifsJson = sharedPrefs.getString("cached_notifications", null)
+        if (cachedNotifsJson != null) {
+            try {
+                val typeToken = object : TypeToken<List<NotificationItem>>() {}.type
+                val notifList: List<NotificationItem> = gson.fromJson(cachedNotifsJson, typeToken)
+                if (notifList.isNotEmpty()) {
+                    _notifications.value = notifList
+                    _unreadCount.value = notifList.count { !it.read }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
     private var firebaseDatabase: FirebaseDatabase? = null
     private var isFirebaseInitialized = false
 
     fun initFirebaseAndSync(context: Context) {
+        // Load offline cached data immediately so user sees their saved signs and notice offline
+        loadCachedData(context)
+
         if (isFirebaseInitialized) return
 
         val options = FirebaseOptions.Builder()
@@ -176,8 +240,20 @@ class MainViewModel : ViewModel() {
             if (FirebaseApp.getApps(context).isEmpty()) {
                 FirebaseApp.initializeApp(context, options)
             }
-            firebaseDatabase = FirebaseDatabase.getInstance()
+            val db = FirebaseDatabase.getInstance()
+            try {
+                db.setPersistenceEnabled(true)
+            } catch (e: Exception) {
+                // Ignore if already set
+            }
+            firebaseDatabase = db
             isFirebaseInitialized = true
+
+            // Keep the main references synced offline automatically
+            db.getReference("app_settings").keepSynced(true)
+            db.getReference("traffic_signs").keepSynced(true)
+            db.getReference("notifications").keepSynced(true)
+
             setupDatabaseListeners(context)
             trackUserSession(context)
         } catch (e: Exception) {
@@ -199,7 +275,7 @@ class MainViewModel : ViewModel() {
                 val devEmail = snapshot.child("developer_email").getValue(String::class.java) ?: ""
                 val fbLink = snapshot.child("facebook_link").getValue(String::class.java) ?: "https://www.facebook.com/share/1EEjYNnJCD/"
 
-                _appSettings.value = AppSettings(
+                val settings = AppSettings(
                     quizLength = qLength,
                     appNotice = notice,
                     appPurpose = purpose,
@@ -208,6 +284,15 @@ class MainViewModel : ViewModel() {
                     developerEmail = devEmail,
                     facebookLink = fbLink
                 )
+                _appSettings.value = settings
+                try {
+                    context.getSharedPreferences("brta_prefs", Context.MODE_PRIVATE)
+                        .edit()
+                        .putString("cached_app_settings", Gson().toJson(settings))
+                        .apply()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
             }
             override fun onCancelled(error: DatabaseError) {}
         })
@@ -256,11 +341,20 @@ class MainViewModel : ViewModel() {
 
                 if (signsList.isNotEmpty()) {
                     val grouped = signsList.groupBy { it.category }
-                    _trafficSigns.value = mapOf(
+                    val signsMap = mapOf(
                         "mandatory" to (grouped["mandatory"] ?: emptyList()),
                         "warning" to (grouped["warning"] ?: emptyList()),
                         "info" to (grouped["info"] ?: emptyList())
                     )
+                    _trafficSigns.value = signsMap
+                    try {
+                        context.getSharedPreferences("brta_prefs", Context.MODE_PRIVATE)
+                            .edit()
+                            .putString("cached_traffic_signs", Gson().toJson(signsMap))
+                            .apply()
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
                 }
             }
             override fun onCancelled(error: DatabaseError) {}
@@ -321,11 +415,20 @@ class MainViewModel : ViewModel() {
                 _notifications.value = sortedList
                 _unreadCount.value = sortedList.count { !it.read }
 
+                try {
+                    context.getSharedPreferences("brta_prefs", Context.MODE_PRIVATE)
+                        .edit()
+                        .putString("cached_notifications", Gson().toJson(sortedList))
+                        .apply()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+
                 // Trigger real system notifications for new unread items
                 if (previousList.isNotEmpty()) {
                     for (notif in sortedList) {
                         if (!notif.read && previousList.none { it.id == notif.id }) {
-                            triggerSystemNotification(context, notif.title, notif.message)
+                            triggerSystemNotification(context, notif.title, notif.message, notif.id)
                         }
                     }
                 } else if (sortedList.isNotEmpty()) {
@@ -333,7 +436,7 @@ class MainViewModel : ViewModel() {
                     val oneHourAgo = System.currentTimeMillis() - 3600_000
                     for (notif in sortedList) {
                         if (!notif.read && notif.timestamp > oneHourAgo) {
-                            triggerSystemNotification(context, notif.title, notif.message)
+                            triggerSystemNotification(context, notif.title, notif.message, notif.id)
                         }
                     }
                 }
@@ -531,6 +634,18 @@ class MainViewModel : ViewModel() {
 // --- Screen Router & Activity ---
 
 class MainActivity : ComponentActivity() {
+    private var viewModelRef: MainViewModel? = null
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val notifId = intent.getStringExtra("notification_id")
+        if (notifId != null) {
+            viewModelRef?.handleNotificationDeepLink(notifId)
+            intent.removeExtra("notification_id")
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(
@@ -546,8 +661,18 @@ class MainActivity : ComponentActivity() {
         setContent {
             MyApplicationTheme {
                 val viewModel: MainViewModel = viewModel()
+                viewModelRef = viewModel
                 val context = LocalContext.current
                 viewModel.initFirebaseAndSync(context)
+
+                // Handle starting intent deep link
+                LaunchedEffect(Unit) {
+                    val startId = intent.getStringExtra("notification_id")
+                    if (startId != null) {
+                        viewModel.handleNotificationDeepLink(startId)
+                        intent.removeExtra("notification_id")
+                    }
+                }
 
                 // Request Notification Permission on Android 13+ (Tiramisu and above)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -569,6 +694,7 @@ class MainActivity : ComponentActivity() {
 
                 if (currentScreen != AppScreen.HOME) {
                     BackHandler {
+                        viewModel.clearHighlightedNotification()
                         viewModel.navigateTo(AppScreen.HOME)
                     }
                 }
@@ -1281,6 +1407,23 @@ fun CatalogScreen(viewModel: MainViewModel) {
 fun NotificationsScreen(viewModel: MainViewModel) {
     val context = LocalContext.current
     val notifications by viewModel.notifications.collectAsState()
+    val highlightedId by viewModel.highlightedNotificationId.collectAsState()
+    val listState = rememberLazyListState()
+
+    // Scroll to highlighted notification and mark as read
+    LaunchedEffect(highlightedId, notifications) {
+        if (highlightedId != null && notifications.isNotEmpty()) {
+            val index = notifications.indexOfFirst { it.id == highlightedId }
+            if (index != -1) {
+                try {
+                    listState.animateScrollToItem(index)
+                    viewModel.markNotificationRead(context, highlightedId!!)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -1295,7 +1438,10 @@ fun NotificationsScreen(viewModel: MainViewModel) {
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { viewModel.navigateTo(AppScreen.HOME) }) {
+                IconButton(onClick = {
+                    viewModel.clearHighlightedNotification()
+                    viewModel.navigateTo(AppScreen.HOME)
+                }) {
                     Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = Color(0xFF1E88E5))
                 }
                 Spacer(modifier = Modifier.width(8.dp))
@@ -1337,14 +1483,24 @@ fun NotificationsScreen(viewModel: MainViewModel) {
             }
         } else {
             LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(notifications) { notif ->
-                    val cardBorder = if (notif.read) null else BorderStroke(2.dp, Color(0xFF90CAF9))
-                    val cardBg = if (notif.read) Color.White else Color(0xFFF3F9FF)
+                    val isHighlighted = notif.id == highlightedId
+                    val cardBorder = when {
+                        isHighlighted -> BorderStroke(3.dp, Color(0xFFFFB300))
+                        notif.read -> null
+                        else -> BorderStroke(2.dp, Color(0xFF90CAF9))
+                    }
+                    val cardBg = when {
+                        isHighlighted -> Color(0xFFFFFDE7)
+                        notif.read -> Color.White
+                        else -> Color(0xFFF3F9FF)
+                    }
 
                     Card(
                         shape = RoundedCornerShape(14.dp),
@@ -1352,7 +1508,12 @@ fun NotificationsScreen(viewModel: MainViewModel) {
                         border = cardBorder,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { viewModel.markNotificationRead(context, notif.id) }
+                            .clickable { 
+                                if (isHighlighted) {
+                                    viewModel.clearHighlightedNotification()
+                                }
+                                viewModel.markNotificationRead(context, notif.id) 
+                            }
                     ) {
                         Row(
                             modifier = Modifier.padding(14.dp),
@@ -1799,16 +1960,17 @@ fun createNotificationChannel(context: Context) {
     }
 }
 
-fun triggerSystemNotification(context: Context, title: String, message: String) {
+fun triggerSystemNotification(context: Context, title: String, message: String, notificationId: String) {
     try {
         createNotificationChannel(context)
 
         val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("notification_id", notificationId)
         }
         val pendingIntent = PendingIntent.getActivity(
             context,
-            0,
+            notificationId.hashCode(),
             intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
@@ -1822,7 +1984,7 @@ fun triggerSystemNotification(context: Context, title: String, message: String) 
             .setAutoCancel(true)
 
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        notificationManager.notify(System.currentTimeMillis().toInt(), builder.build())
+        notificationManager.notify(notificationId.hashCode(), builder.build())
     } catch (e: Exception) {
         e.printStackTrace()
     }
