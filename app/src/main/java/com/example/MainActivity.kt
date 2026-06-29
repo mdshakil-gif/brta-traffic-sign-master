@@ -9,6 +9,14 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.os.Build
+import androidx.core.app.NotificationCompat
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
@@ -277,9 +285,50 @@ class MainViewModel : ViewModel() {
                         )
                     )
                 }
+
+                if (notifList.isEmpty()) {
+                    // Fallback local notifications so the screen is never blank
+                    notifList.add(
+                        NotificationItem(
+                            id = "welcome_notif",
+                            title = "স্বাগতম বিআরটিএ ট্রাফিক সাইন মাস্টার অ্যাপে!",
+                            message = "ট্রাফিক সাইন পরিচিতি এবং পরীক্ষা দেওয়ার জন্য অ্যাপটি সম্পূর্ণ প্রস্তুত। সকল সাইন ভালোভাবে পড়ে ক্যাটাগরি ভিত্তিক পরীক্ষা দিন।",
+                            timestamp = System.currentTimeMillis() - 600000,
+                            read = readIds.contains("welcome_notif")
+                        )
+                    )
+                    notifList.add(
+                        NotificationItem(
+                            id = "exam_tip_notif",
+                            title = "ফাইনাল মক টেস্ট টিপস 💡",
+                            message = "ফাইনাল মক টেস্টে অংশ নেওয়ার আগে নিশ্চিত হোন যে আপনি সবগুলো বাধ্যতামূলক ও সতর্কতামূলক সাইন ভালোভাবে মুখস্থ করেছেন।",
+                            timestamp = System.currentTimeMillis() - 3600000,
+                            read = readIds.contains("exam_tip_notif")
+                        )
+                    )
+                }
+
                 val sortedList = notifList.sortedByDescending { it.timestamp }
+                val previousList = _notifications.value
                 _notifications.value = sortedList
                 _unreadCount.value = sortedList.count { !it.read }
+
+                // Trigger real system notifications for new unread items
+                if (previousList.isNotEmpty()) {
+                    for (notif in sortedList) {
+                        if (!notif.read && previousList.none { it.id == notif.id }) {
+                            triggerSystemNotification(context, notif.title, notif.message)
+                        }
+                    }
+                } else if (sortedList.isNotEmpty()) {
+                    // On first app load, if there's a very recent unread notification (less than 1 hour old), show it in status bar
+                    val oneHourAgo = System.currentTimeMillis() - 3600_000
+                    for (notif in sortedList) {
+                        if (!notif.read && notif.timestamp > oneHourAgo) {
+                            triggerSystemNotification(context, notif.title, notif.message)
+                        }
+                    }
+                }
             }
             override fun onCancelled(error: DatabaseError) {}
         })
@@ -480,7 +529,24 @@ class MainActivity : ComponentActivity() {
         setContent {
             MyApplicationTheme {
                 val viewModel: MainViewModel = viewModel()
-                viewModel.initFirebaseAndSync(LocalContext.current)
+                val context = LocalContext.current
+                viewModel.initFirebaseAndSync(context)
+
+                // Request Notification Permission on Android 13+ (Tiramisu and above)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    val permissionLauncher = rememberLauncherForActivityResult(
+                        contract = ActivityResultContracts.RequestPermission()
+                    ) { _ -> }
+                    LaunchedEffect(Unit) {
+                        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                                context,
+                                android.Manifest.permission.POST_NOTIFICATIONS
+                            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                        ) {
+                            permissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    }
+                }
 
                 val currentScreen by viewModel.currentScreen.collectAsState()
 
@@ -1590,5 +1656,47 @@ fun WinnerScreen(viewModel: MainViewModel) {
                 }
             }
         }
+    }
+}
+
+fun createNotificationChannel(context: Context) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val name = "বিআরটিএ ট্রাফিক সাইন মাস্টার"
+        val descriptionText = "গুরুত্বপূর্ণ নোটিফিকেশন ও আপডেট"
+        val importance = NotificationManager.IMPORTANCE_DEFAULT
+        val channel = NotificationChannel("brta_notifications", name, importance).apply {
+            description = descriptionText
+        }
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.createNotificationChannel(channel)
+    }
+}
+
+fun triggerSystemNotification(context: Context, title: String, message: String) {
+    try {
+        createNotificationChannel(context)
+
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            0,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val builder = NotificationCompat.Builder(context, "brta_notifications")
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.notify(System.currentTimeMillis().toInt(), builder.build())
+    } catch (e: Exception) {
+        e.printStackTrace()
     }
 }
