@@ -1,0 +1,6 @@
+{
+  "name": "BRTA Traffic Sign Master",
+  "description": "একটি সম্পূর্ণ রিয়েল-টাইম ট্রাফিক সাইন পরিচিতি ও প্রস্তুতি অ্যাপ্লিকেশন যা ড্রাইভিং লাইসেন্স পরীক্ষা সহজ করে তোলে।",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
