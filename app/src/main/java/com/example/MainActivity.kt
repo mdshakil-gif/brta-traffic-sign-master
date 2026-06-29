@@ -9,6 +9,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.SystemBarStyle
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -525,7 +526,16 @@ class MainViewModel : ViewModel() {
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(
+                android.graphics.Color.TRANSPARENT,
+                android.graphics.Color.TRANSPARENT
+            ),
+            navigationBarStyle = SystemBarStyle.light(
+                android.graphics.Color.TRANSPARENT,
+                android.graphics.Color.TRANSPARENT
+            )
+        )
         setContent {
             MyApplicationTheme {
                 val viewModel: MainViewModel = viewModel()
@@ -612,7 +622,12 @@ fun SvgImage(svgCode: String, modifier: Modifier = Modifier) {
                     android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                     android.view.ViewGroup.LayoutParams.MATCH_PARENT
                 )
-                settings.javaScriptEnabled = false
+                settings.apply {
+                    javaScriptEnabled = false
+                    cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
+                    domStorageEnabled = false
+                    databaseEnabled = false
+                }
                 setBackgroundColor(0)
                 isVerticalScrollBarEnabled = false
                 isHorizontalScrollBarEnabled = false
@@ -620,33 +635,36 @@ fun SvgImage(svgCode: String, modifier: Modifier = Modifier) {
             }
         },
         update = { webView ->
-            val html = """
-                <html>
-                <head>
-                <style>
-                body {
-                    margin: 0;
-                    padding: 0;
-                    display: flex;
-                    justify-content: center;
-                    align-items: center;
-                    width: 100%;
-                    height: 100%;
-                    background-color: transparent;
-                }
-                svg {
-                    width: 100%;
-                    height: 100%;
-                }
-                </style>
-                </head>
-                <body>
-                $svgCode
-                </body>
-                </html>
-            """.trimIndent()
-            val encodedHtml = android.util.Base64.encodeToString(html.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
-            webView.loadData(encodedHtml, "text/html; charset=utf-8", "base64")
+            if (webView.tag != svgCode) {
+                webView.tag = svgCode
+                val html = """
+                    <html>
+                    <head>
+                    <style>
+                    body {
+                        margin: 0;
+                        padding: 0;
+                        display: flex;
+                        justify-content: center;
+                        align-items: center;
+                        width: 100%;
+                        height: 100%;
+                        background-color: transparent;
+                    }
+                    svg {
+                        width: 100%;
+                        height: 100%;
+                    }
+                    </style>
+                    </head>
+                    <body>
+                    $svgCode
+                    </body>
+                    </html>
+                """.trimIndent()
+                val encodedHtml = android.util.Base64.encodeToString(html.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
+                webView.loadData(encodedHtml, "text/html; charset=utf-8", "base64")
+            }
         },
         modifier = modifier
     )
