@@ -32,6 +32,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -48,6 +50,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.caverock.androidsvg.SVG
+import android.graphics.Picture
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import com.example.ui.theme.MyApplicationTheme
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
@@ -569,6 +576,7 @@ class MainActivity : ComponentActivity() {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
+                        .background(Color(0xFFF4F6F9))
                         .statusBarsPadding()
                         .navigationBarsPadding()
                 ) {
@@ -611,63 +619,160 @@ fun formatBanglaTimeAgo(timestamp: Long): String {
     return toBanglaNum(cal.get(Calendar.DAY_OF_MONTH)) + "/" + toBanglaNum(cal.get(Calendar.MONTH) + 1) + "/" + toBanglaNum(cal.get(Calendar.YEAR))
 }
 
-// --- Svg WebView Rendering ---
+// --- Svg Native Canvas Rendering ---
 
 @Composable
 fun SvgImage(svgCode: String, modifier: Modifier = Modifier) {
-    AndroidView(
-        factory = { context ->
-            WebView(context).apply {
-                layoutParams = android.view.ViewGroup.LayoutParams(
-                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                    android.view.ViewGroup.LayoutParams.MATCH_PARENT
-                )
-                settings.apply {
-                    javaScriptEnabled = false
-                    cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
-                    domStorageEnabled = false
-                    databaseEnabled = false
+    val picture = remember(svgCode) {
+        try {
+            val svg = SVG.getFromString(svgCode)
+            svg.renderToPicture()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    if (picture != null) {
+        Canvas(modifier = modifier) {
+            drawIntoCanvas { canvas ->
+                val nativeCanvas = canvas.nativeCanvas
+                nativeCanvas.save()
+                
+                val width = size.width
+                val height = size.height
+                val picWidth = picture.width.toFloat()
+                val picHeight = picture.height.toFloat()
+                
+                if (picWidth > 0 && picHeight > 0) {
+                    val scaleX = width / picWidth
+                    val scaleY = height / picHeight
+                    val scale = minOf(scaleX, scaleY)
+                    
+                    val dx = (width - picWidth * scale) / 2f
+                    val dy = (height - picHeight * scale) / 2f
+                    
+                    nativeCanvas.translate(dx, dy)
+                    nativeCanvas.scale(scale, scale)
                 }
-                setBackgroundColor(0)
-                isVerticalScrollBarEnabled = false
-                isHorizontalScrollBarEnabled = false
-                setOnTouchListener { _, _ -> true }
+                
+                nativeCanvas.drawPicture(picture)
+                nativeCanvas.restore()
             }
-        },
-        update = { webView ->
-            if (webView.tag != svgCode) {
-                webView.tag = svgCode
-                val html = """
-                    <html>
-                    <head>
-                    <style>
-                    body {
-                        margin: 0;
-                        padding: 0;
-                        display: flex;
-                        justify-content: center;
-                        align-items: center;
-                        width: 100%;
-                        height: 100%;
-                        background-color: transparent;
+        }
+    } else {
+        Spacer(modifier = modifier)
+    }
+}
+
+// --- Sign Category Sharp Badge Rendering ---
+
+@Composable
+fun SignCategoryBadge(type: String, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier.size(44.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        when (type) {
+            "catalog" -> {
+                // Beautiful Traffic Light Icon
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .background(Color(0xFFECEFF1), shape = RoundedCornerShape(12.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .width(18.dp)
+                            .height(34.dp)
+                            .background(Color(0xFF37474F), shape = RoundedCornerShape(6.dp))
+                            .padding(vertical = 3.dp),
+                        verticalArrangement = Arrangement.SpaceEvenly,
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Box(modifier = Modifier.size(6.dp).background(Color(0xFFE53935), shape = CircleShape))
+                        Box(modifier = Modifier.size(6.dp).background(Color(0xFFFFA000), shape = CircleShape))
+                        Box(modifier = Modifier.size(6.dp).background(Color(0xFF4CAF50), shape = CircleShape))
                     }
-                    svg {
-                        width: 100%;
-                        height: 100%;
-                    }
-                    </style>
-                    </head>
-                    <body>
-                    $svgCode
-                    </body>
-                    </html>
-                """.trimIndent()
-                val encodedHtml = android.util.Base64.encodeToString(html.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
-                webView.loadData(encodedHtml, "text/html; charset=utf-8", "base64")
+                }
             }
-        },
-        modifier = modifier
-    )
+            "mandatory" -> {
+                // Sharp Red Circle Road Sign Base
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(Color(0xFFE53935), shape = CircleShape)
+                        .border(BorderStroke(3.dp, Color.White), shape = CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(12.dp)
+                            .background(Color.White, shape = RoundedCornerShape(2.dp))
+                    )
+                }
+            }
+            "warning" -> {
+                // Sharp Warning Diamond Sign Base
+                Box(
+                    modifier = Modifier.size(40.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .graphicsLayer(rotationZ = 45f)
+                            .background(Color(0xFFFFA000), shape = RoundedCornerShape(4.dp))
+                            .border(BorderStroke(2.dp, Color(0xFF263238)), shape = RoundedCornerShape(4.dp))
+                    )
+                    Text(
+                        text = "!",
+                        color = Color(0xFF263238),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Black
+                    )
+                }
+            }
+            "info" -> {
+                // Sharp Blue Square Road Sign Base
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(Color(0xFF1E88E5), shape = RoundedCornerShape(8.dp))
+                        .border(BorderStroke(2.dp, Color.White), shape = RoundedCornerShape(8.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "i",
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+            "final" -> {
+                // Shiny Trophy/Star Badge
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .background(Color(0xFFFFF9C4), shape = CircleShape)
+                        .border(BorderStroke(2.dp, Color(0xFFFBC02D)), shape = CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Star,
+                        contentDescription = "Trophy",
+                        tint = Color(0xFFFBC02D),
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
+            }
+            else -> {
+                Spacer(modifier = Modifier.size(40.dp))
+            }
+        }
+    }
 }
 
 // --- Composable Screens ---
@@ -791,7 +896,7 @@ fun HomeScreen(viewModel: MainViewModel) {
                         modifier = Modifier.padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(text = "🚦", fontSize = 32.sp)
+                        SignCategoryBadge(type = "catalog", modifier = Modifier.size(48.dp))
                         Spacer(modifier = Modifier.width(16.dp))
                         Column {
                             Text(
@@ -822,7 +927,7 @@ fun HomeScreen(viewModel: MainViewModel) {
 
             item {
                 CategoryExamCard(
-                    emoji = "🔴",
+                    type = "mandatory",
                     title = "বাধ্যতামূলক সাইন টেস্ট",
                     onClick = { viewModel.startExam("mandatory") }
                 )
@@ -830,7 +935,7 @@ fun HomeScreen(viewModel: MainViewModel) {
 
             item {
                 CategoryExamCard(
-                    emoji = "🟡",
+                    type = "warning",
                     title = "সতর্কতামূলক সাইন টেস্ট",
                     onClick = { viewModel.startExam("warning") }
                 )
@@ -838,7 +943,7 @@ fun HomeScreen(viewModel: MainViewModel) {
 
             item {
                 CategoryExamCard(
-                    emoji = "🔵",
+                    type = "info",
                     title = "তথ্যমূলক সাইন টেস্ট",
                     onClick = { viewModel.startExam("info") }
                 )
@@ -857,7 +962,7 @@ fun HomeScreen(viewModel: MainViewModel) {
                         modifier = Modifier.padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(text = "🏆", fontSize = 32.sp)
+                        SignCategoryBadge(type = "final", modifier = Modifier.size(44.dp))
                         Spacer(modifier = Modifier.width(16.dp))
                         Column {
                             Text(
@@ -991,7 +1096,7 @@ fun HomeScreen(viewModel: MainViewModel) {
 }
 
 @Composable
-fun CategoryExamCard(emoji: String, title: String, onClick: () -> Unit) {
+fun CategoryExamCard(type: String, title: String, onClick: () -> Unit) {
     Card(
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -1004,7 +1109,7 @@ fun CategoryExamCard(emoji: String, title: String, onClick: () -> Unit) {
             modifier = Modifier.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(text = emoji, fontSize = 28.sp)
+            SignCategoryBadge(type = type)
             Spacer(modifier = Modifier.width(16.dp))
             Text(
                 text = title,
@@ -1082,12 +1187,12 @@ fun CatalogScreen(viewModel: MainViewModel) {
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             val categories = listOf(
-                Triple("mandatory", "১. বাধ্যতামূলক সাইন", "🔴"),
-                Triple("warning", "২. সতর্কতামূলক সাইন", "🟡"),
-                Triple("info", "৩. তথ্যমূলক সাইন", "🔵")
+                Pair("mandatory", "১. বাধ্যতামূলক সাইন"),
+                Pair("warning", "২. সতর্কতামূলক সাইন"),
+                Pair("info", "৩. তথ্যমূলক সাইন")
             )
 
-            categories.forEach { (catKey, catTitle, emoji) ->
+            categories.forEach { (catKey, catTitle) ->
                 val isOpen = openCategory == catKey
                 val list = trafficSigns[catKey] ?: emptyList()
 
@@ -1104,16 +1209,20 @@ fun CatalogScreen(viewModel: MainViewModel) {
                                 .clickable {
                                     openCategory = if (isOpen) null else catKey
                                 }
-                                .padding(16.dp),
+                                .padding(12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "$emoji $catTitle",
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.Black
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                SignCategoryBadge(type = catKey, modifier = Modifier.size(32.dp))
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(
+                                    text = catTitle,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.Black
+                                )
+                            }
                             Text(
                                 text = if (isOpen) "▲" else "▼",
                                 fontSize = 14.sp,
